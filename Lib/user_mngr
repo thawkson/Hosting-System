@@ -1,0 +1,108 @@
+#!/usr/bin/perl -w
+use strict;
+use DBI();
+use Carp;
+use Getopt::Std;
+
+require 'user.lib';
+require 'database.lib';
+
+my (%opts,$dbh,$type);
+my $DB = "monkeymeat";
+my $HOST = "localhost";
+my $DBUSER = "monkeymeat";
+my $DBPASS = "ogee";
+
+
+# Main
+
+getopts('?ADSu:p:e:c:',\%opts);
+
+ 
+ $dbh = DBLib::Open_DBI($DB,$HOST,$DBUSER,$DBPASS);
+ my $username 	= $opts{'u'};
+ my $pass 	= $opts{'p'};
+ my $email 	= $opts{'e'};
+ my $createdby	= $opts{'c'}; 
+ 	
+if ($opts{'D'}) {
+ if (GENLib::check_UserExists($dbh,$username)==1) {
+	Delete_Admin_User($dbh,$username);
+	print "$username + subaccounts deleted\n";
+ }
+ else {
+	print "User $username does not exist could not delete\n";
+ }
+}
+
+elsif($opts{'A'}) {
+ 
+ if ($opts{'S'}) {
+	$type="2";
+ } 
+ else {
+	$type="1";
+ }
+
+ if ((Add_Admin_user($dbh,$username,$pass,$type,$email,$createdby)) == 0) {
+	print "User $username added\n";
+ }
+ else {
+	print "User $username Already exists\n";
+ }
+}
+
+else {
+# Handle Help Options
+ help()	
+}
+ DBLib::Close_DBI($dbh);
+
+
+# End Main
+
+sub Add_Admin_user {
+ my($dbh,$admin_name,$admin_pass,$admin_type,$admin_email,$admin_createdby) = @_;
+ my $sql; 
+ my $admin_createdbyID  = GENLib::get_adminID($dbh,$createdby);
+
+ if ((GENLib::check_UserExists($dbh,$admin_name)) == 0) {
+ 	$sql=$dbh->prepare("INSERT INTO admin (admin_name,admin_pass,admin_type,admin_email,admin_createdby) values('$admin_name','$admin_pass','$admin_type','$admin_email','$admin_createdbyID')");
+ 	$sql->execute();
+ 	$sql->finish();
+	return(0); # Success!!
+ }
+ else {
+	return (1); # Failure
+ }
+}
+
+sub Delete_Admin_User {
+
+ my ($dbh,$admin_name) = @_;
+ my ($admin_id)	  = GENLib::get_adminID($dbh,$admin_name);
+ my $sql;
+
+ $sql=$dbh->prepare("DELETE FROM admin WHERE admin_name = '$admin_name' or admin_createdby = '$admin_id'");
+ $sql->execute();
+ $sql->finish();
+}
+
+sub help {
+print << "HELP";
+Usage:$0 [opts]
+
+Adds And Removes Users
+
+Options
+ -? display this help message
+ -A Add User
+ -D Delete User
+ -S Make User a Sub User
+ -u Username
+ -p Password
+ -e Email Address
+ -c Which user is creating this account
+HELP
+ exit(0);
+}

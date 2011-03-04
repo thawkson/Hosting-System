@@ -1,0 +1,221 @@
+#!/usr/bin/perl -w
+########################################################
+# Security Check by Larry Long - larry@djslyde.com     #
+# checksecurity - 5/7 programs in checksuite v2.7      #
+#                                                      #
+# This script basically throws together some good      #
+# information to keep an eye on the security of your   #
+# server.                                              #
+########################################################
+use strict;
+use Getopt::Std;
+use Net::SMTP;
+
+$ENV{'PATH'} = '/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:/usr/local/m0nkeym34t/sbin:/usr/local/m0nkeym34t/bin';
+
+# Options: -h (help) -l (log) -o (output to screen) -r (RPM check) -e (email)
+my %opt;getopts('hlore:', \%opt);
+usage_info() unless defined @ARGV;
+usage_info() if exists $opt{h};
+
+# Localize variables throughout the rest of the program
+# A lot of data requires a lot of variables...
+my($logdate,$host,$kernel,$rpmcheck,$dirtybins,$checkdev,$devlist,$checkroot,$rootlist,$rootcheck,$syncheck,$checksyn,$openlist,$connlist,$wholist,$devcheck,$email,$pam,$checkrootgroup,$checkwheelgroup,$logfile,$script,$logsnip,@note,@rootlist,@rootcheck,$suid,$suidfiles,$sgid,$sgidfiles,$hide,$hidden,$subject);
+
+# Define variables
+$email = $opt{e};$email = 'root@localhost' unless defined $opt{e};
+$host = `hostname`;
+$logfile = "/var/log/checksuite.d/checksecurity";
+$logdate = `date '+%m/%d/%Y %H:%M:%S' `;
+$script = " - [checksuite] checksecurity\n";
+$logsnip = "----\n";
+$kernel = `uname -r`;
+$subject = "[checksuite] summary - security check on $host";
+chomp $host;chomp $logdate;chomp $kernel;chomp $subject;
+
+push(@note, "Security Check Summary on $host - $logdate\n");
+push(@note, "Kernel version: $kernel\n\n");
+
+# RPM system verification
+if($opt{r})
+   {
+   $rpmcheck = `rpm -Va|grep bin`;
+   chomp $rpmcheck;
+   if($rpmcheck ne "")
+      {
+      $dirtybins = $rpmcheck;
+      }
+   else
+      {
+      $dirtybins = "...none!";
+      }
+
+push(@note, "Modified binary files: $dirtybins\n");
+   }
+
+# Anything weird in /dev?
+$checkdev = `find /dev -type f`;
+$devlist = $checkdev;
+chomp $devlist;
+$devlist =~s/\/dev\/MAKEDEV//g;
+if($devlist ne "")
+   {
+   $devcheck = $devlist;
+   }
+else
+   {
+   $devcheck = "...none!";
+   }
+push(@note, "Improper files found in /dev: $devcheck\n");
+
+# Got root? (this is gettin ugly...)
+$checkroot = `fgrep "0:0" /etc/passwd|cut -d ':' -f 1`;
+$checkrootgroup = `fgrep "root:x" /etc/group|cut -d ':' -f 4`;
+$checkwheelgroup = `fgrep "wheel:x" /etc/group|cut -d ':' -f 4`;
+
+chomp $checkroot;chomp $checkrootgroup;chomp $checkwheelgroup;
+$checkroot =~s/root//g;$checkrootgroup =~s/root//g;$checkwheelgroup =~s/root//g;
+push(@rootlist, "$checkroot $checkrootgroup $checkwheelgroup");
+
+if($checkroot ne "")
+   {
+   @rootcheck = @rootlist;
+   }
+elsif($checkrootgroup ne "")
+   {
+   @rootcheck = @rootlist;
+   }
+elsif($checkwheelgroup ne "")
+   {
+   @rootcheck = @rootlist;
+   }
+else
+   {
+   @rootcheck = "...none!";
+   }
+push(@note, "Users with root/wheel perms: @rootcheck\n");
+
+# Any setuid files in /home could be bad...
+$suid = `find /home -type f -exec file {} \\\; | grep setuid`;
+chomp $suid;
+if($suid ne "")
+   {
+   $suidfiles = $suid;
+   }
+else
+   {
+   $suidfiles = "...none!";
+   }
+push(@note, "Files in /home with setuid's on: $suidfiles\n");
+
+# Any setgid files in /home could be bad...
+$sgid = `find /home -type f -exec file {} \\\; | grep setgid`;
+chomp $sgid;
+if($sgid ne "")
+   {
+   $sgidfiles = $sgid;
+   }
+else
+   {
+   $sgidfiles = "...none!";
+   }
+push(@note, "Files in /home with setgid's on: $sgidfiles\n");
+
+# Hidden directories are the devil's playground
+$hide = `find / -name ". " && find / -name " ." && find / -name ".. " && find / -name " .." && find / -name "..." && find / -name " ..." && find / -name "... "`;
+chomp $hide;
+if($hide ne "")
+   {
+   $hidden = $hide; 
+   }
+else
+   {
+   $hidden = "...none!";
+   }
+push(@note, "Hidden directories found: $hidden\n");
+
+# Any SYN floods?
+$syncheck = `netstat -na|grep SYN_RECV`;
+chomp $syncheck;
+if($syncheck ne "")
+   {
+   $checksyn = $syncheck;
+   }
+else
+   {
+   $checksyn = "...none!";
+   }
+push(@note, "Possible SYN flooding: $checksyn\n\n");
+
+# What's going on right now?
+$openlist = `lsof -i|grep TCP`;
+chomp $openlist;push(@note, "Open file listing (TCP):\n$openlist\n\n");
+
+my $uopenlist = `lsof -i|grep UDP`;
+chomp $uopenlist;push(@note, "Open file listing (UDP):\n$uopenlist\n\n");
+
+$connlist = `netstat -nap|grep tcp`;
+chomp $connlist;push(@note, "Current TCP connections:\n$connlist\n\n");
+
+my $uconnlist = `netstat -nap|grep udp`;
+chomp $uconnlist;push(@note, "Current UDP connections:\n$uconnlist\n\n");
+
+$wholist = `last -n 20 -a`;
+chomp $wholist;push(@note, "Last 20 users that logged in:\n$wholist\n\n");
+
+$pam = `tail -500 /var/log/messages |grep -i pam_unix`;
+chomp $pam;push(@note, "Recent PAM authentication log entries:\n$pam\n");
+
+# Define where the output goes
+log_data() if exists $opt{l};
+email_data() if exists $opt{e};
+screen_data() if exists $opt{o};
+
+# Subroutines
+sub usage_info
+   {
+   my $usage = "
+Usage: $0 [-h | -lo] [-r] [-e <email>]
+Options:
+-h              display this help
+-l              log the output to /var/log/checksuite.d/checksecurity
+-o              force output to screen
+-r              perform full system RPM check
+-e              e-mail the output to a specified e-mail address
+Where:
+<email>         e-mail address of the recipient of the notification
+\n";
+   die $usage;
+   }
+
+sub log_data
+   {
+   open(LOG, ">>$logfile") or die "Can't open logfile!\n";
+   print LOG $logdate,$script,@note,$logsnip;
+   close(LOG);
+   }
+
+sub screen_data
+   {
+   print STDERR @note;
+   }
+
+sub email_data
+   {
+   my $smtp = Net::SMTP->new($host);
+   if(! ref($smtp))
+      {
+      log_die("Cannot connect to SMTP\n");
+      }
+   $smtp->mail($email);
+   $smtp->to($email);
+   $smtp->data();
+   $smtp->datasend("To: " . $email . "\n");
+   $smtp->datasend("From: Checksuite Notification <root\@$host>\n");
+   $smtp->datasend("Return-Path: " . $email. "\n");
+   $smtp->datasend("Subject: " . $subject . "\n");
+   $smtp->datasend("\n");
+   $smtp->datasend(@note);
+   $smtp->datasend();
+   $smtp->quit();
+   }

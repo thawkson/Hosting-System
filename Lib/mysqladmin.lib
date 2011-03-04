@@ -1,0 +1,86 @@
+#!/usr/bin/perl -w
+
+# MySQL Administration Functions
+
+# Core Methods
+
+sub mysqlCreateDB {
+	my $database = shift;
+	system "$config{'mysql_admin_exec'} -h\"$config('mysql_host'}\" -u\"$config{'mysql_admin_user'}\" -p\"$config{'mysql_admin_pass'}\" create $database";	
+}
+
+sub mysqlDropDB {
+        my $database = shift;
+        system "$config{'mysql_admin_exec'} -h\"$config('mysql_host'}\" -u\"$config{'mysql_admin_user'}\" -p\"$config{'mysql_admin_pass'}\" drop $database";
+}
+
+sub mysqlDeleteUser {
+	my $dbuser = shift;
+	my $delete_user_statement = "DELETE from user where user='$dbuser'";
+	system $config{'mysql_exec'} -h \"$config{'mysql_host'}\" -u \"$config{'mysql_admin_user'}\" -p\"$config{'mysql_admin_pass'}\" -e\"$delete_user_statement\" mysql";
+}
+
+sub mysqlInsertUser {
+	my $dbuser = shift;
+        my $pass = shift;
+	my $user_insert_statement;
+	$user_insert_statement = "INSERT INTO user (Host,User,Password) VALUES('$config{'mysql_host'}','$dbuser',PASSWORD('$pass'));";
+	system "$config{'mysql_exec'} -h \"$config{'mysql_host'}\" -u \"$config{'mysql_admin_user'}\" -p\"$config{'mysql_admin_pass'}\" -e\"$user_insert_statement\" mysql";
+}
+
+sub mysqlGrantUser {
+	my $dbuser = shift;
+	my $pass = shift;
+	my $database = shift;
+	my $privs = shift;
+	my $ip = shift;
+	my $netmask = shift;
+	my $grant_statement;
+	if (!$ip || !$netmask) {
+		$ip = $config{'mysql_grant_ip'};
+		$netmask = $config{'mysql_grant_netmask'};
+	}
+	if (!$privs) {
+		$privs = "ALL";
+	}
+        $grant_statement = "GRANT $privs ON $database.* TO $dbuser IDENTIFIED BY '$pass'";
+	system "$config{'mysql_exec'} -h \"$config{'mysql_host'}\" -u \"$config{'mysql_admin_user'}\" -p\"$config{'mysql_admin_pass'}\" -e\"$grant_statement\" mysql";
+}
+
+
+# End of Core Methods
+
+# Main Functions
+# These are functions that make use of the Core Methods
+
+sub grantDatabasePrivs {
+	my $dbuser = shift;
+	my $pass = shift;
+	my $database = shift;
+	my $ip = shift;
+        my $netmask = shift;
+	my $privs = shift;
+	mysqlGrantUser($dbuser, $pass, $database, $privs, $ip, $netmask);
+	setRestart("database");
+}
+
+sub createDatabaseUser {
+	my $dbuser = shift;
+	my $pass = shift;
+	mysqlInsertUser($dbuser, $pass);
+	setRestart("database");
+}
+
+sub removeDatabase {
+	my $database = shift;
+	my $user = shift;
+	mysqlDropDB($database);
+	removeUserDatabase($user, $database);
+}
+
+sub removeDatabaseUser {
+        my $dbuser = shift;
+        mysqlDeleteUser($dbuser);
+	setRestart("database");
+}
+

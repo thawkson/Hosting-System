@@ -1,0 +1,148 @@
+#!/usr/bin/perl -w
+########################################################
+# SYN Flood Monitor by Larry Long - larry@djslyde.com  #
+# checksyn - 7/7 programs in checksuite v2.7           #
+#                                                      #
+# This greps from the 'netstat' command for connections#
+# that have a SYN_RECV state and if we see the same IP #
+# multiple times, block it. For use only with Kernel   #
+# version 2.2.x and 2.4.x.                             #
+########################################################
+use strict;
+use Getopt::Std;
+use Net::SMTP;
+
+$ENV{'PATH'} = '/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:/usr/local/m0nkeym34t/sbin:/usr/local/m0nkeym34t/bin';
+
+# Options: -h (help) -l (log) -o (output to screen) -e (email)
+my %opt;getopts('hloe:', \%opt);
+usage_info() unless defined @ARGV;
+usage_info() if exists $opt{h};
+
+# Localize variables throughout the rest of the program
+my($fw,$email,$host,$total,$chains,$whatfw,$logfile,$logdate,$logsnip,$notify,@chains,@synlist,@nastyips,$ip,@note,$verifychain,$block,$cookie,$ips,%hash,$count,$blockips,@blockips,$synlist,$script,$subject);
+
+# Let's enable SYN cookies if the kernel supports it
+$cookie = `/bin/ls /proc/sys/net/ipv4/|grep tcp_syncookies`;
+if($cookie eq "tcp_syncookies")
+   {
+   system("/bin/echo 1 > /proc/sys/net/ipv4/tcp_syncookies");
+   }
+
+# Let's bump up the socket queue so the system will have less chance of 
+# being overwhelmed with bogus connection requests prior to us blocking them
+system("/bin/echo 1280 > /proc/sys/net/ipv4/tcp_max_syn_backlog");
+
+# Additional optimizations to reduce chances of being DoS'ed
+system("/bin/echo 30 > /proc/sys/net/ipv4/tcp_fin_timeout");
+system("/bin/echo 1800 > /proc/sys/net/ipv4/tcp_keepalive_time");
+system("/bin/echo 1 > /proc/sys/net/ipv4/tcp_window_scaling");
+system("/bin/echo 0 > /proc/sys/net/ipv4/tcp_sack");
+
+# IPTables or IPChains? Let the kernel decide...
+$whatfw = `uname -r`;
+if($whatfw lt 2.4)
+   {
+   $fw = "/sbin/ipchains";$block = "DENY";
+   }
+else
+   {
+   $fw = "/sbin/iptables";$block = "DROP";
+   }
+
+# Define variables
+$email = $opt{e};$email = 'root@localhost' unless defined $opt{e};
+$host = `hostname`;
+$logfile = "/var/log/checksuite.d/checksyn";
+$logdate = `date '+%m/%d/%Y %H:%M:%S' `;
+$script = " - [checksuite] checksyn\n";
+$logsnip = "----\n";
+$notify = 0;
+$subject = "[checksuite] advisory - possible SYN flood on $host";
+chomp $host;chomp $logdate;chomp $script;chomp $subject;
+
+# Setup the chain...
+system("$fw -N SYN >> /dev/null 2>&1");
+system("$fw -F SYN >> /dev/null 2>&1");
+
+# Let's block these guys
+@synlist = `netstat -na|grep SYN_RECV`;
+foreach $ips (@synlist)
+   {
+   @nastyips = split(/\s+/, $ips);
+   $ip = $nastyips[4];
+   $ip =~ s/\:\D+//g;
+   $ip =~ s/\:\d+//g;
+   $hash{$ip} = $count++;
+   push @blockips, $ip;
+   }
+for($count = 0; $count < @blockips; $count++)
+   {
+   $hash{$blockips[$count]} = $count + 1;
+   }
+foreach $synlist (sort keys %hash)
+   {
+   system("$fw -A SYN -s $synlist -j $block");
+   if($synlist ne "")
+      {
+      $notify++;
+      }
+   }
+@chains = `$fw -nL SYN`;
+push(@note, "\nCurrent list of blocked SYN flooders:\n@chains\n");
+
+# Define where the output goes
+if($notify > 0)
+   {
+   log_data() if exists $opt{l};
+   email_data() if exists $opt{e};
+   screen_data() if exists $opt{o};
+   }
+
+# Subroutines
+sub usage_info
+   {
+   my $usage = "
+Usage: $0 [-h | -lo] [-e <email>]
+Options:
+-h              display this help
+-l              log the output to /var/log/checksuite.d/checksyn
+-o              force output to screen
+-e              e-mail the output to a specified e-mail address
+Where:
+<email>         e-mail address of the recipient of the notification
+\n";
+   die $usage;
+   }
+
+sub log_data
+   {
+   open(LOG, ">>$logfile") or die "Uh oh! Can't open logfile!\n";
+   print LOG $logdate,$script,@note,$logsnip;
+   close(LOG);
+   }
+
+sub screen_data
+   {
+   print STDERR @note;
+   }
+
+sub email_data
+   {
+   my $smtp = Net::SMTP->new($host);
+   if(! ref($smtp))
+      {
+      log_die("Cannot connect to SMTP\n");
+      }
+   $smtp->mail($email);
+   $smtp->to($email);
+   $smtp->data();
+   $smtp->datasend("To: " . $email . "\n");
+   $smtp->datasend("From: Checksuite Notification <root\@$host>\n");
+   $smtp->datasend("Return-Path: " . $email. "\n");
+   $smtp->datasend("Subject: " . $subject . "\n");
+   $smtp->datasend("\n");
+   $smtp->datasend(@note);
+   $smtp->datasend();
+   $smtp->quit();
+   }

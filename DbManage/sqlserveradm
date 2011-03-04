@@ -1,0 +1,113 @@
+#!/usr/bin/perl -w
+
+# This Script Exports databases, Restores databases, Adds and Removes users
+
+require 5;
+require '/usr/local/m0nkeym34t/conf/monkeym33t.conf';
+use strict;
+
+#Modules to use
+
+use Carp;
+use Getopt::Std;
+
+#Command line options to parse
+my (%opts);
+getopts ('?arei:u:p:d:', \%opts);
+help() if exists $opts{'?'};
+
+my $username = $opts{'u'} || die "A username is REQUIRED";
+my $password = $opts{'p'} || die "A password is REQUIRED";
+my $database = $opts{'d'} || die "A database name is REQUIRED";
+
+adddb($username,$password,$database) if exists $opts{'a'};
+remdb($username,$password,$database) if exists $opts{'r'};
+exportdb($username,$password,$database) if exists $opts{'e'};
+my $importfile = $opts{'i'} || die "An import file.sql is REQUIRED";
+importdb($username,$password,$database,$importfile) if exists $opts{'i'};
+
+sub adddb {
+my $username = $_[0];
+my $password = $_[1];
+my $database = $_[2];
+
+my $admin_username      = $Configuration::config{'dbuser_root'};
+my $admin_password      = $Configuration::config{'dbpass_root'};
+my $host_name 		= "localhost";
+
+# Grant the user MySQL Access
+my $grant_statement = "GRANT ALL ON $database.* TO $username IDENTIFIED BY '$password'";
+my $user_statement = "INSERT INTO user (Host,User,Password) VALUES('$host_name','$username',PASSWORD('$password'));";
+
+`mysqladmin -h "$host_name" -u "$admin_username" -p"$admin_password" create $database`;
+`mysql -h "$host_name" -u "$admin_username" -p"$admin_password" -e"$user_statement" mysql`;
+`mysql -h "$host_name" -u "$admin_username" -p"$admin_password" -e"$grant_statement" "mysql"`;
+`mysqladmin -h "$host_name" -u "$admin_username" -p"$admin_password" reload`;
+exit(0);
+}
+
+sub remdb {
+my $username = $_[0];
+my $password = $_[1];
+my $database = $_[2];
+
+my $admin_username      = $Configuration::config{'dbuser_root'};
+my $admin_password      = $Configuration::config{'dbpass_root'};
+my $host_name 		= "localhost";
+
+# Remove user from Mysql user table
+my $delete_statement = "DELETE from user where user='$username'";
+`mysql -h "$host_name" -u "$admin_username" -p"$admin_password" -e"$delete_statement" "mysql"`;
+`mysqladmin --force -h "$host_name" -u "$admin_username" -p"$admin_password" drop $database`;
+`mysqladmin -h "$host_name" -u "$admin_username" -p"$admin_password" reload`;
+exit(0);
+}
+
+sub exportdb {
+my $username = $_[0];
+my $password = $_[1];
+my $database = $_[2];
+
+my $admin_username      = $Configuration::config{'dbuser_root'};
+my $admin_password      = $Configuration::config{'dbpass_root'};
+my $host_name 		= "localhost";
+
+`mysqldump -p"$password" -u "$username" $database > $database\.sql`;
+exit(0);
+}
+
+sub importdb {
+my $username = $_[0];
+my $password = $_[1];
+my $database = $_[2];
+my $importfile = $_[3];
+
+my $admin_username      = $Configuration::config{'dbuser_root'};
+my $admin_password      = $Configuration::config{'dbpass_root'};
+my $host_name 		= "localhost";
+
+
+`mysql -u "$username -p"$password" "$database" < $importfile`;
+exit(0);
+}
+
+
+# Sub-Routines
+sub help
+ {
+  print << "HELP";
+  Usage: $0 [opts]
+       Console/Batch User Manager Program.
+                
+     Options:
+	-? Display This Help Message
+	-a add database
+	-r remove database
+	-e export database to file
+	-i import database from file (expects db.sql type file)
+	-u username for database
+	-p password for database
+	-d Database name
+HELP
+  exit;
+}

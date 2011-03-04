@@ -1,0 +1,151 @@
+#!/usr/bin/perl -w
+#
+#
+######################################################################
+#
+# REQUIREMENTS
+
+require 5;
+require '/usr/local/m0nkeym34t/conf/monkeym33t.conf';
+
+use strict;
+
+######################################################################
+#
+# MODULES
+
+use Carp;
+use Getopt::Std;
+use Apache::Admin::Config;
+
+######################################################################
+#
+# VARIABLES
+
+my (%opts);
+my $logfile = "/usr/local/m0nkeym34t/log/m0nk3ym34t.log";
+
+### 	Configuration
+
+######################################################################
+#
+# MAIN
+
+	# parse command-line options
+	getopts('?vwms:u:g:h:d:f:', \%opts);
+
+	help() if exists $opts{'?'};
+	
+	if ($opts{'v'}) {
+		viewvhosts();
+	}
+	elsif ($opts{'d'}) {
+		deletevhost($opts{'d'})
+	}
+	else {
+		my $server_name = $opts{'s'};
+		my $folder;
+
+		
+		$folder	= $opts{'f'};
+			
+		if ($opts{'m'}) {
+			# Create the folder on the filesystem
+			`mkdir $folder`;
+		}		
+		
+
+		addvhost($server_name,$folder);
+	}
+
+
+
+
+	#viewvhosts() if exists $opts{'v'};
+	#deletevhost($opts{'d'}) if exists $opts{'d'};
+
+	
+	
+
+######################################################################
+#
+# SUBROUTINES
+
+sub addvhost {
+	my $server_name = $_[0];
+	my $folder 	= $_[1];
+
+	my $vhostcnf = $Configuration::config{'vhostcnf'};
+
+	# Parse an apache configuration file
+	my $conf = new Apache::Admin::Config $vhostcnf || die $Apache::Admin::Config::ERROR;	
+
+	my $serveradm	= "webmaster\@$server_name";
+	my $serveralias = "$server_name,www.$server_name";	
+	
+
+	my $vhost = $conf->add_section(VirtualHost=>$server_name);
+	$vhost->add_directive(ServerAdmin=>$serveradm);
+	$vhost->add_directive(DocumentRoot=>$folder);
+	$vhost->add_directive(ServerName=>$server_name);
+	$vhost->add_directive(ServerAlias=>$serveralias);
+	$conf->save; 		
+exit(1);
+}
+
+
+sub viewvhosts {
+ # Get the configuration file location
+ my $vhostcnf = $Configuration::config{'vhostcnf'};
+
+ # Parse an apache configuration file
+ my $conf = new Apache::Admin::Config $vhostcnf || die $Apache::Admin::Config::ERROR;
+
+ foreach($conf->section(-name => "virtualhost")) {
+       print $_;
+       print ",";
+       print $_->directive('documentroot');	
+       print "\n";
+ }
+ exit(1);
+}
+
+sub deletevhost {
+ my $server_name;
+ $server_name = $_[0];
+
+ # Get the configuration file location
+ my $vhostcnf = $Configuration::config{'vhostcnf'};
+
+ # Parse an apache configuration file
+ my $conf = new Apache::Admin::Config $vhostcnf || die $Apache::Admin::Config::ERROR;
+
+ foreach($conf->section(-name => "virtualhost")) {
+        $_->delete for $conf->section(-value=>$server_name);
+ }
+ $conf->save;
+ exit(1);
+}
+
+# a generic help blarb
+sub help {
+    print <<"HELP";
+Usage: $0 [opts]
+
+Simple Apache VirtualHost block generator.
+
+Options:
+  -?     Display this message
+
+  -s xx  VirtualHost Full ServerName (e.g. example.org)
+  -f xx  Document Root
+  -m xx  Create the document root folder on the filesystem
+  -v xx  View a List of all the Virtual domains
+  -d xx  Delete a specified Virtual host entry
+
+HELP
+    exit(1);
+}
+
+__END__
+

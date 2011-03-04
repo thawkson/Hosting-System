@@ -1,0 +1,134 @@
+#!/usr/bin/perl -w
+########################################################
+# Inode Monitor by Larry Long - larry@djslyde.com      #
+# checkinodes - 3/7 programs in checksuite v2.7        #
+#						       #
+# This greps from the 'df' command for the inode       #
+# utilization and if it goes over a certain threshold, #
+# it can log and/or e-mail a notification.             #
+########################################################
+use strict;
+use Getopt::Std;
+use Net::SMTP;
+
+$ENV{'PATH'} = '/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:/usr/local/m0nkeym34t/bin';
+
+# Options: -h (help) -l (log) -o (output) -t (threshold) -e (email) -p (pager)
+my %opt;getopts('hlot:e:p:', \%opt);
+usage_info() unless defined @ARGV;
+usage_info() if exists $opt{h};
+
+# Localize variables throughout the rest of the program
+my($email,$host,$threshold,$total,$util,@disk_fields,@note,$notify,$logdate,$logfile,$logsnip,$script,$subject,@pnote,$pmail,$psubject);
+
+# Define variables
+$threshold = $opt{t};$threshold = '85' unless defined $opt{t};
+$email = $opt{e};$email = 'root@localhost' unless defined $opt{e};
+$pmail = $opt{p};
+$host = `hostname`;
+$logfile = "/var/log/checksuite.d/checkinodes";
+$logdate = `date '+%m/%d/%Y %H:%M:%S' `;
+$script = " - [checksuite] checkinodes\n";
+$logsnip = "----\n";
+$notify = 0;
+$subject = "[checksuite] advisory - inode utilization is high on $host";
+$psubject = "[checksuite] checkinodes";
+chomp $host;chomp $logdate;chomp $subject;chomp $psubject;
+
+# Pull the inode utilization
+open(DISK, "df -iP -x none -x tmpfs -x iso9660|grep dev|");
+while(<DISK>)
+   {
+   @disk_fields = split(/\s+/, $_);
+   $util = $disk_fields[4];
+   $util =~ s/\%//g;
+   if($util >= $threshold)
+      {
+      push(@note, "Current inode utilization for $disk_fields[5] is equal to or above $threshold: $disk_fields[4]\n");
+      push(@pnote, "$disk_fields[5] is at $disk_fields[4]\n");
+      $notify++;
+      }
+   }
+close(DISK);
+
+# Define where the output goes
+if($notify > 0)
+   {
+   $total = `df -iT -x none -x tmpfs -x iso9660`;
+   push(@note, "Total Inode Utilization:\n$total\n");
+   log_data() if exists $opt{l};
+   email_data() if exists $opt{e};
+   screen_data() if exists $opt{o};
+   pager_data() if exists $opt{p};
+   }
+
+# Subroutines
+sub usage_info
+   {
+   my $usage = "
+Usage: $0 [-h | -lo] [-t <threshold>] [-e <email>] [-p <email>]
+Options:
+-h              display this help
+-l              log the output to /var/log/checksuite.d/checkinodes
+-o              force output to screen
+-t              sets the threshold for notification
+-e              e-mail the output to a specified e-mail address
+-p              send shortened output to a pager or cell phone
+Where:
+<threshold>     threshold value - default is 85 percent
+<email>         e-mail address of the recipient of the notification
+\n";
+   die $usage;
+   }
+
+sub log_data
+   {
+   open(LOG, ">>$logfile") or die "Can't open logfile!\n";
+   print LOG $logdate,$script,@note,$logsnip;
+   close(LOG);
+   }
+
+sub screen_data
+   {
+   print STDERR @note;
+   }
+
+sub email_data
+   {
+   my $smtp = Net::SMTP->new($host);
+   if(! ref($smtp))
+      {
+      log_die("Cannot connect to SMTP\n");
+      }
+   $smtp->mail($email);
+   $smtp->to($email);
+   $smtp->data();
+   $smtp->datasend("To: " . $email . "\n");
+   $smtp->datasend("From: Checksuite Notification <root\@$host>\n");
+   $smtp->datasend("Return-Path: " . $email. "\n");
+   $smtp->datasend("Subject: " . $subject . "\n");
+   $smtp->datasend("\n");
+   $smtp->datasend(@note);
+   $smtp->datasend();
+   $smtp->quit();
+   }
+
+sub pager_data
+   {
+   my $smtp = Net::SMTP->new($host);
+   if(! ref($smtp))
+      { 
+      log_die("Cannot connect to SMTP\n");
+      }
+   $smtp->mail($pmail);
+   $smtp->to($pmail);
+   $smtp->data();
+   $smtp->datasend("To: " . $pmail . "\n");
+   $smtp->datasend("From: Checksuite Notification <root\@$host>\n");
+   $smtp->datasend("Return-Path: " . $pmail. "\n");
+   $smtp->datasend("Subject: " . $psubject . "\n");
+   $smtp->datasend("\n");
+   $smtp->datasend(@pnote);
+   $smtp->datasend();
+   $smtp->quit();
+   }

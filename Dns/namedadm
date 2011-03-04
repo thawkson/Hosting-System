@@ -1,0 +1,388 @@
+#!/usr/bin/perl -w
+
+# Requirements
+require 5;
+require '/usr/local/m0nkeym34t/conf/monkeym33t.conf';
+use strict;
+
+# Modules to use
+
+use Carp;
+use Getopt::Std;
+
+## Configuration
+
+
+# Static Vars And Global Declarations
+my (%opts);
+my $type; 
+my $mainip; 
+my $user;
+my $domainname;
+my $logfile = "/usr/local/m0nkeym34t/log/m0nk3ym34t.log";
+
+## Main
+getopts('?cmvpMi:r:d:a:A:u:b:n:', \%opts);
+# Handle Help Options
+help() if exists $opts{'?'};
+
+
+#Check the zone file type
+
+if ($opts{'c'}) {
+	$type = "colocated"; 
+	#if exists $opts{'c'}; 
+}
+elsif ($opts{'m'}) {
+	$type = "main"; 
+	#if exists $opts{'m'} ;
+}
+elsif ($opts{'v'}) {
+	$type = "virtual"; 
+	#if exists $opts{'v'}; 
+
+}
+elsif ($opts{'p'}) {
+	$type = "parked"; 
+	#if exists $opts{'p'}; 
+
+}
+elsif ($opts{'M'}) {
+	$type = "manual"; 
+	#if exists $opts{'M'};
+}
+else {
+	die "You Must Enter domain type options include -m -v -M -p\n";
+}
+
+# Run any other subroutines based on CLI info
+if ($opts{'u'}) {
+	$mainip = $opts{'i'} || die "You must enter a Main IP for this domain\n";
+	updatearecordip($opts{'d'},$opts{'n'},$type,$opts{'u'},$opts{i}); 
+# if exists $opts{'u'};
+}
+
+elsif ($opts{'b'}) {
+	$mainip = $opts{'i'} || die "You must enter a Main IP for this domain\n";
+	batchipupdate($opts{'d'},$type,$opts{'b'},$opts{i}); 
+# if exists $opts{'b'};
+}
+elsif ($opts{'r'}) {
+	removedomain($opts{'r'},$type); 
+# if exists $opts{'r'};
+}
+elsif ($opts{'a'}) {
+	removearecord($opts{'d'},$opts{'a'},$type); 
+# if exists $opts{'a'};
+}
+elsif ($opts{'A'}) {
+	$mainip = $opts{'i'} || die "You must enter a Main IP for this domain\n";
+	addarecord($opts{'d'},$opts{'A'},$opts{'i'},$type); 
+	# if exists $opts{'A'};
+}
+else {
+	$mainip = $opts{'i'} || die "You must enter a Main IP for this domain\n";
+	$domainname = $opts{'d'} || die "You Must Enter a Domain Name (use the -d option)\n";
+	addzoneentry($domainname,$type);
+	writezonefile($domainname,$mainip,$type);
+}
+
+
+
+exit(1);
+ 
+## SubRoutines
+sub addzoneentry {
+    my $domain = $_[0];
+    my $zonefiletype = $_[1];
+    my $date = getFormattedDate(time);    
+
+    my $zoneentry = qq~zone "$domain" in {
+    type master;
+    file "$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain";
+};
+
+~;
+    open(ZONEREFS, ">>$Configuration::config{'bindrefext'}/master.$zonefiletype");
+    print ZONEREFS $zoneentry;
+    `echo $date Added $domain to zoneref file >> $logfile`;
+}
+
+sub addarecord {
+	my $domain = $_[0];
+	my $arecordname = $_[1];
+	my $arecordip = $_[2];
+	my $zonefiletype = $_[3];
+	my $insertarecord;
+	my $date = getFormattedDate(time);
+	$insertarecord = qq~$arecordname 	IN 	A 	$arecordip
+~;
+	open(ZONE, ">>$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+		print ZONE $insertarecord;
+	close ZONE;
+	&updateserial("$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+	print "here\n";
+	`echo $date Added $arecordname A Record to $domain >> $logfile`;
+exit;
+}
+
+sub writezonefile {
+    my $domain = $_[0];
+    my $mainip = $_[1];
+    my $zonefiletype = $_[2];
+    my $serial = &DatedSerial;
+    my $date = getFormattedDate(time);
+
+    my $namedfile = qq~;Zone File for $domain
+;
+\$TTL 3D
+\@                 IN    SOA   $domain.    root.$domain. (
+			 $serial 	;Serial
+			 8H 	;Refresh
+			 2H 	;Retry
+			 4W 	;Expire
+                         1D 	;Default_ttl
+			 )
+                         
+                         IN 	A 	$mainip
+			 IN 	NS 	ns1.$domain.
+			 IN 	MX 10 	mail.$domain.
+
+;*********************
+; Routing A Records
+;*********************
+ns1 	IN 	A 	$mainip
+mail 	IN 	A 	$mainip
+ftp 	IN 	A 	$mainip
+www 	IN 	A 	$mainip
+~;
+
+open(NAMED, ">$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+    print NAMED $namedfile;
+close NAMED;
+`echo $date Printing zone file for domain $domain >> $logfile`;
+
+}
+
+sub removedomain {
+    my $domain = $_[0];
+    my $zonefiletype = $_[1];
+    my $zone;
+    my $zonefile = "$Configuration::config{'bindrefext'}/master.$zonefiletype";   
+    my $zonefileloc = "$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain";	
+    my $date = getFormattedDate(time);
+
+ # Open file zoneref file and remove domain
+ # Check to see if the file exists
+    if ( -e $zonefile) {
+    	open(ZONEREFS, "$zonefile");
+    		foreach (<ZONEREFS>) {
+			$zone .= $_;
+    		}
+    	close(ZONEREFS);
+    }
+    else {
+	`echo $date File $zonefile does not exist >> $logfile`;
+    }
+
+   # Search the zone file for a particular zone then replace it with nothing (since we are removing the domain)
+   # This was taken from L33tcode
+   if ($zone =~ m/zone "$domain"[^\}]*\};\n/) {
+   	$zone =~ s/zone "$domain"[^\}]*\};\n//; 
+   }
+   else {
+	`echo $date entry does not exist >> $logfile`;
+	exit(1);
+   }
+ # Open the file again and re-write the zone file with the ommited domain
+ # Check to see if the file is open
+ if ( -e $zonefile) {
+ 	open(ZONEREFS, "+>$zonefile");
+ 		print ZONEREFS $zone;
+ 	close ZONEREFS;
+ 	`echo $date Domain $domain has been removed from zoneref file >> $logfile`;
+ 	`echo $date Deleting Zone file for $domain >> $logfile`;
+ }
+ else {
+	`echo $date $zonefile does not exist >> $logfile`;
+ }
+  
+ # Delete Zone file for domain
+ if ( -e $zonefileloc) {
+ 	unlink $zonefileloc;
+ 	`echo $date Removing domain $domain >> $logfile`;
+ }
+ else {
+	`echo $date File does not exist >> $logfile`;
+ }
+exit(0);    
+}
+
+sub updateserial {
+	my $domainfile = $_[0];
+	my $serial;
+	my $newserial;
+	my $date = getFormattedDate(time);
+
+	open ZONE, "$domainfile";
+	foreach (<ZONE>) {
+		$serial .= $_;
+	}
+	close ZONE;
+	$newserial = &DatedSerial;
+#	$serial =~ s/([/t/t/t/s]+.*+[/s/t]\;\"Serial\"\n)/$newserial\;\"Serial\"\n/;
+	$serial =~ s/			 .* 	\;Serial\n/			 $newserial 	\;Serial\n/;
+	open(ZONE, "+>$domainfile");
+		print ZONE $serial;
+		`echo $date Updated Serial number for $domainfile to $serial >> monkeym33t.log`;
+	close ZONE;
+}
+
+sub DatedSerial {
+        my $year;
+        my $month;
+        my $day;
+        my $hour;
+        my $min;
+        my $sec;
+        my $ourdate;
+        my $datestuff;
+        my $newserialtime;
+        my $timestuff;
+	my @datestuff;
+	my @timestuff;
+
+        $ourdate = `date`;
+        @datestuff = split(/\s+/, $ourdate);
+        $year = $datestuff[5];
+        if    ( $datestuff[1] eq "Jan" ) { $month = "01"; }
+        elsif ( $datestuff[1] eq "Feb" ) { $month = "02"; }
+        elsif ( $datestuff[1] eq "Mar" ) { $month = "03"; }
+        elsif ( $datestuff[1] eq "Apr" ) { $month = "04"; }
+        elsif ( $datestuff[1] eq "May" ) { $month = "05"; }
+        elsif ( $datestuff[1] eq "Jun" ) { $month = "06"; }
+        elsif ( $datestuff[1] eq "Jul" ) { $month = "07"; }
+        elsif ( $datestuff[1] eq "Aug" ) { $month = "08"; }
+        elsif ( $datestuff[1] eq "Sep" ) { $month = "09"; }
+        elsif ( $datestuff[1] eq "Oct" ) { $month = "10"; }
+        elsif ( $datestuff[1] eq "Nov" ) { $month = "11"; }
+        elsif ( $datestuff[1] eq "Dec" ) { $month = "12"; }
+        else                             { $month = "99"; }
+        $day = $datestuff[2];
+        @timestuff = split(/:/, $datestuff[3]);
+        $hour = $timestuff[0];
+        $min = $timestuff[1];
+        $sec = $timestuff[2];
+        $newserialtime = $year.$month.$day.$hour;
+        return $newserialtime;
+}
+
+
+sub removearecord {
+my $domain = $_[0];
+my $arecord_name = $_[1];
+my $zonefiletype = $_[2];
+my $zone;
+my $date = getFormattedDate(time);
+
+open ZONE, "$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain";
+foreach (<ZONE>) {
+	 $zone .= $_;
+}
+close ZONE;
+$zone =~ s/($arecord_name[\s\t]+IN[\s\t]+A[\s\t]+.*)//;
+open(ZONE, "+>$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+ print ZONE $zone;
+close ZONE;
+
+&updateserial("$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+
+`echo $date Removed $arecord_name from $domain >> $logfile`;
+exit(0);
+}
+
+sub updatearecordip {
+my $domain = $_[0];
+my $arecord_name = $_[1];
+my $zonefiletype = $_[2];
+my $newip = $_[3];
+my $oldip = $_[4];   
+my $zone;
+my $date = getFormattedDate(time);
+ 
+open ZONE, "$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain";
+ foreach (<ZONE>) {
+        $zone .= $_;
+ }
+close ZONE;
+$zone =~ s/($arecord_name[\s\t]+IN[\s\t]+A[\s\t]+$oldip)/$arecord_name 	IN 	A 	$newip/;
+open(ZONE, "+>$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+	print ZONE $zone;
+close ZONE;
+&updateserial("$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+`echo $date updated ip for $arecord_name.$domain from $oldip to $newip >> $logfile`;
+exit(0);
+}
+
+sub batchipupdate {
+my $domain = $_[0];
+my $zonefiletype = $_[1];
+my $newip = $_[2];
+my $oldip = $_[3];   
+my $zone;
+my $date = getFormattedDate(time);
+ 
+open ZONE, "$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain";
+ foreach (<ZONE>) {
+        $zone .= $_;
+ }
+close ZONE;
+$zone =~ s/$oldip/$newip/g;
+open(ZONE, "+>$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+	print ZONE $zone;
+close ZONE;
+&updateserial("$Configuration::config{'bindzoneext'}/master/$zonefiletype/$domain");
+`echo $date updated all the ips for $domain from $oldip to $newip >> $logfile`;
+exit(0);
+}
+
+
+# Formats the take and time returned from the system "time" command
+sub getFormattedDate {
+        my $thetime = shift;
+        my @localtime = $localtime $thetime;
+        my $themonth = (Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec)[$localtime[4]];
+        my $localtime[2] = "0" . $localtime[2] if ($localtime[2] < 10);
+        my $localtime[1] = "0" . $localtime[1] if ($localtime[1] < 10);
+        my $localtime[0] = "0" . $localtime[0] if ($localtime[0] < 10);
+        my $ftime = "$themonth $localtime[3] $localtime[2]:$localtime[1]:$localtime[0] " . ($localtime[5] + 1900);
+        return $ftime;
+}
+
+
+sub help {
+    print <<"HELP";
+Usage: $0 [opts]
+
+Generate Basic DNS Entries for bind
+At the Moment this program only deals with domains of the type master
+
+Options:
+  -?    Display this help message
+  -u	Update an A Record IP
+		Where -u is the new ip address and -i is the old ip address and -n is the A record name
+  -c    Co-Located Domain 
+  -m    One of the companies domains
+  -v    A Virtual Hosting domain
+  -p    A Domain that we are Parking
+  -M    A domain that we manually edit for whatever reason
+  -i    The Main Ip that belongs to the domain
+  -r    Remove Domain
+  -b	Batch update IP (Updates common ip within any of the hosting types IE. Virtual, Co-located etc...)
+		Where -b is the new ip address and -i is the old ip address
+  -d    Domain name to add
+  -a	Remove A record
+  -A	Add A record
+HELP
+  exit(0);
+ }

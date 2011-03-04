@@ -1,0 +1,146 @@
+#!/usr/bin/perl -w
+########################################################
+# Hardware Monitor by Larry Long - larry@djslyde.com   #
+# checkhardware - 2/7 programs in checksuite v2.7      #
+#                                                      #
+# This greps the system's dmesg log for any errors     #
+# that may be hardware related.                        #
+########################################################
+use strict;
+use Getopt::Std;
+use Net::SMTP;
+
+$ENV{'PATH'} = '/bin:/usr/bin:/usr/local/bin:/sbin:/usr/sbin:/usr/local/sbin:/usr/local/m0nkeym34t/sbin:/usr/local/m0nkeym34t/bin';
+
+# Options: -h (help) -l (log) -o (output to screen) -e (email) -p (pager)
+my %opt;getopts('hloe:p:', \%opt);
+usage_info() unless defined @ARGV;
+usage_info() if exists $opt{h};
+
+# Localize variables throughout the rest of the program
+my($email,$host,$dmesg,@note,$notify,$logdate,$logfile,$logsnip,$script,@errors,$possibility,$subject,@pnote,$pmail,$psubject,@dlog,@temp);
+
+# Define variables
+$email = $opt{e};$email = 'root@localhost' unless defined $opt{e};
+$pmail = $opt{p};
+$host = `hostname`;
+$logfile = "/var/log/checksuite.d/checkhardware";
+$logdate = `date '+%m/%d/%Y %H:%M:%S' `;
+$script = " - [checksuite] checkhardware\n";
+$logsnip = "----\n";
+$notify = 0;
+$subject = "[checksuite] advisory - possibly hardware issues found on $host";
+$psubject = "[checksuite] checkhardware";
+chomp $host;chomp $logdate;chomp $subject;chomp $psubject;
+
+push(@note, "Possible problems found in system log:\n\n");
+
+# False positives
+my $false1= "keyboard: Timeout - AT keyboard not present?";
+my $false2= "Checking 386/387 coupling... OK, FPU using exception 16 error reporting.";
+my $false3= "Error: only one processor found";
+my $false4= "task migration cache decay timeout";
+
+# Are there any errors in dmesg?
+@errors = ("error", "failed", "unable to load", "timeout", "bad", "timed out", "call trace");
+
+@dlog = `dmesg`;
+
+foreach my $dline (@dlog)
+   {
+   if(($dline !~ /$false1/i) && ($dline !~ /$false2/i) && ($dline !~ /$false3/i) && ($dline !~ /$false4/i))
+      {
+      push(@temp, "$dline");
+      }
+   }
+
+foreach my $tline (@temp)
+   {
+   foreach my $eline (@errors)
+      {
+      if($tline =~ /$eline/i)
+         {
+         $notify++;
+         push(@note, "Possibility $notify: $tline");
+         push(@pnote, "$tline");
+         }
+      }
+   } 
+      
+# Define where the output goes
+if($notify > 0)
+   {
+   log_data() if exists $opt{l};
+   email_data() if exists $opt{e};
+   screen_data() if exists $opt{o};
+   pager_data() if exists $opt{p};
+   }
+
+# Subroutines
+sub usage_info
+   {
+   my $usage = "
+Usage: $0 [-h | -lo] [-e <email>] [-p <email>]
+Options:
+-h              display this help
+-l              log the output to /var/log/checksuite.d/checkhardware
+-o              force output to screen
+-e              e-mail the output to a specified e-mail address
+-p              send shortened output to a pager or cell phone
+Where:
+<email>         e-mail address of the recipient of the notification
+\n";
+   die $usage;
+   }
+
+sub log_data
+   {
+   open(LOG, ">>$logfile") or die "Uh oh! Can't open logfile!\n";
+   print LOG $logdate,$script,@note,$logsnip;
+   close(LOG);
+   }
+
+sub screen_data
+   {
+   print STDERR @note;
+   }
+
+sub email_data
+   {
+   my $smtp = Net::SMTP->new($host);
+   if(! ref($smtp))
+      {
+      log_die("Cannot connect to SMTP\n");
+      }
+   $smtp->mail($email);
+   $smtp->to($email);
+   $smtp->data();
+   $smtp->datasend("To: " . $email . "\n");
+   $smtp->datasend("From: Checksuite Notification <root\@$host>\n");
+   $smtp->datasend("Return-Path: " . $email. "\n");
+   $smtp->datasend("Subject: " . $subject . "\n");
+   $smtp->datasend("\n");
+   $smtp->datasend(@note);
+   $smtp->datasend();
+   $smtp->quit();
+   }
+
+sub pager_data
+   {
+   my $smtp = Net::SMTP->new($host);
+   if(! ref($smtp))
+      { 
+      log_die("Cannot connect to SMTP\n");
+      }
+   $smtp->mail($pmail);
+   $smtp->to($pmail);
+   $smtp->data();
+   $smtp->datasend("To: " . $pmail . "\n");
+   $smtp->datasend("From: Checksuite Notification <root\@$host>\n");
+   $smtp->datasend("Return-Path: " . $pmail. "\n");
+   $smtp->datasend("Subject: " . $psubject . "\n");
+   $smtp->datasend("\n");
+   $smtp->datasend(@pnote);
+   $smtp->datasend();
+   $smtp->quit();
+   }

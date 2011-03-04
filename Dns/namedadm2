@@ -1,0 +1,133 @@
+#!/usr/bin/perl -w
+
+use strict;
+require 5;
+
+use DNS::ZoneParse;
+use XML::Simple;
+use Carp;
+use Getopt::Std;
+
+## Main
+my (%opts);
+getopts('?cmvpMi:r:d:a:A:u:b:n:', \%opts);
+# Handle Help Options
+help() if exists $opts{'?'};
+
+
+#Create_Zone_File("packetmonkey.ca","209.217.82.130");
+Add_A_Record("packetmonkey.ca","tones","209.217.82.131");
+
+## SubRoutines
+sub Add_A_Record {
+        my $Domain = $_[0];
+        my $A_Record_Name = $_[1];
+        my $A_Record_IP = $_[2];
+	my $zonefile = DNS::ZoneParse->new("$Domain", "$Domain");
+	my $A_Records = $zonefile->a();
+	push (@$A_Records, { name => $A_Record_Name, class => 'IN',
+                         host => $A_Record_IP, ttl => '' });
+    
+    $zonefile->new_serial();
+    # Write the new zone file to disk
+    open ZONE, ">$Domain" or die "error";
+    	print ZONE $zonefile->output();
+    close ZONE;
+
+}
+sub Remove_Record {
+	my $Domain = $_[0];
+	my $Record_Name = $_[1];
+	my $Record_Type = $_[2];
+	my $zonefile = DNS::ZoneParse->new("$Domain", "$Domain");
+
+	if (uc($Record_Type) = "MX") {
+	 my $mx_record = $zonefile->mx();
+	 for (@mx_record) {
+		s/$Record_Name//;
+	 }
+	}
+	elsif (uc($Record_Type) = "A") {
+	 my $a_record = $zonefile->a();
+         for (@a_record) {
+                #s/$Record_Name//;
+		print "@a_record\n";
+         }
+	}
+
+       $zonefile->new_serial();
+       # Write the new zone file to disk
+       open ZONE, ">$Domain" or die "error";
+       	print ZONE $zonefile->output();
+       close ZONE;
+}
+
+sub Create_Zone_File {
+    my $Domain = $_[0];
+    my $Main_IP = $_[1];
+    my $tmp_file = qq~;Zone File for $Domain
+;
+\$TTL 3D
+\@                       IN    SOA   $Domain.    root.$Domain. (
+                         0      ;Serial
+                         8H     ;Refresh
+                         2H     ;Retry
+                         4W     ;Expire
+                         1D     ;Default_ttl
+                         )
+
+                         IN     A       $Main_IP
+                         IN     NS      ns1.$Domain.
+                         IN     MX 10   mail.$Domain.
+
+;*********************
+; Routing A Records
+;*********************
+ns1     IN      A       $Main_IP
+mail    IN      A       $Main_IP
+ftp     IN      A       $Main_IP
+www     IN      A       $Main_IP
+~;
+
+open(NAMED, ">$Domain");
+    print NAMED $tmp_file;
+close NAMED;
+
+my $zonefile = DNS::ZoneParse->new("$Domain", "$Domain");
+
+# Set Record References
+#my $a = zonefile->a;
+#my $mx = zonefile->mx;
+
+# Root Level
+$zonefile->new_serial();
+
+# Write the new zone file to disk
+open ZONE, ">$Domain" or die "error";
+print ZONE $zonefile->output();
+close ZONE;
+
+}
+
+
+sub help {
+    print <<"HELP";
+Usage: $0 [opts]
+
+Generate Basic DNS Entries for bind
+At the Moment this program only deals with domains of the type master
+
+Options:
+  -?    Display this help message
+  -u    Update an A Record IP
+                Where -u is the new ip address and -i is the old ip address and -n is the A record name
+  -i    The Main Ip that belongs to the domain
+  -r    Remove Domain
+  -b    Batch update IP (Updates common ip within any of the hosting types IE. Virtual, Co-located etc...)
+                Where -b is the new ip address and -i is the old ip address
+  -d    Domain name to add
+  -a    Remove A record
+  -A    Add A record
+HELP
+  exit(0);
+}

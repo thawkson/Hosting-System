@@ -1,0 +1,67 @@
+#!/usr/bin/perl -w
+
+
+# General Functions 
+package GENLib;
+use strict;
+
+
+sub check_UserExists {
+ my ($dbh,$admin_name) = @_;
+ my ($sql,$ref,$retval_AdminUser);
+
+ $sql=$dbh->prepare("SELECT admin_name FROM admin where admin_name = '$admin_name'");
+ $sql->execute();
+ while ($ref=$sql->fetchrow_hashref()) {
+        $retval_AdminUser = $ref->{'admin_name'};
+ }
+ $sql->finish();
+ if (!$retval_AdminUser) {
+        return(0); # Success
+ }
+ else {
+        return(1); # Failure
+ }
+}
+
+
+sub get_adminID {
+ my ($dbh,$admin_name) = @_;
+ my($sql,$ref,$retval_adminID);
+
+ $sql=$dbh->prepare("SELECT admin_id FROM admin WHERE admin_name='$admin_name'");
+ $sql->execute();
+ while ($ref=$sql->fetchrow_hashref()) {
+        $retval_adminID = $ref->{'admin_id'};
+ }
+ if (!($retval_adminID)) {
+        $retval_adminID = "NULL";
+        return ($retval_adminID);
+ }
+ else {
+        return ($retval_adminID);
+ }
+}
+
+sub Check_Ftp_User_Exists {
+ my ($dbh,$user) = @_;
+ my ($retval_user,$sql,$ref);
+
+ $sql = $dbh->prepare("SELECT user FROM ftpd where user = '$user'");
+ $sql->execute();
+ while ($ref=$sql->fetchrow_hashref()) {
+         $retval_user = $ref->{'user'};
+ }
+ $sql->finish();
+ if ($retval_user eq "") {
+        return(0); # Success
+ }
+ else {
+        return(1); # Failure
+ }
+
+}
+
+
+1;
+

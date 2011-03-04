@@ -1,0 +1,172 @@
+#!/usr/bin/perl -w
+
+# Core Bind Management Methods
+
+sub hasDomainZone {
+	my $domain = shift;
+	return (-e "$config{'named_base_dir'}$config{'named_zone_dir'}$domain");
+}
+
+# Manipulate Domains
+sub extractDomainsFromZone {
+	my $domain = shift;
+	my $r_db = shift;
+        my %db;
+	my $zone;
+	my @lines;
+	my $line;
+	my $qdomain = quotemeta $domain;
+	return 0 if (!hasDomainZone($domain));
+	readFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+	@lines = split /\n/, $zone;
+	foreach $line (@lines) {
+		if ($line =~ /(.*\.$qdomain)\.[\s\t]+IN[\s\t]+A[\s\t]+(.*)/) {
+			$db{$1}{'ip'} = $2;
+		}
+	}
+	%{$r_db} = %db;
+	return keys %{$r_db};
+}
+
+sub getSubdomainZoneIP {
+	my $domain = shift;
+	my $subdomain = shift;
+	my $r_string = shift;
+	my $zone;
+	my $qsubdomain = quotemeta $subdomain;
+	readFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+	$zone =~ /\n$qsubdomain\.[\s\t]+IN[\s\t]+A[\s\t]+(.*)/;
+	$$r_string = $1;
+	return $$r_string;
+}
+
+sub modifySubdomainZone {
+	my $domain = shift;
+	my $subdomain = shift;
+	my $ip = shift;
+	my $zone;
+	my $qsubdomain = quotemeta $subdomain;
+	lock("$domain.zone");
+	readFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+	$zone =~ s/(\n$qsubdomain\.[\s\t]+IN[\s\t]+A[\s\t]+).*/$1$ip/;
+	writeFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+	unlock("$domain.zone");
+}
+
+# End Manipulate Domains
+
+# Add and Remove Master Domains
+sub addDomainMasterZone {
+	my $domain = shift;
+	lockf("named.conf");
+	appendFile($config{'named_conf'}, 
+\qq~zone "$domain"{
+        type master;
+        file "$config{'named_zone_dir'}$domain";
+};
+~);
+	unlockf("named.conf");
+}
+
+sub addDomainZone {
+        my $domain = shift;
+	my $ip = shift;
+	lockf("$domain.zone");
+	writeFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", 
+\qq~; Zone file for $domain
+;
+; The full zone file
+;
+\$TTL 3D
+\@               IN      SOA     $domain.    root.$domain. (
+                        2001121301 ; serial
+                        8H ; refresh
+                        2H ; retry
+                        4W ; expire
+                        1D ; default_ttl
+                        )
+;
+                NS      ns
+                MX      10      $domain.
+;
+$domain.    IN      A       $ip
+*       IN      A       $config{'named_ip'}
+~);
+	unlockf("$domain.zone");
+}
+
+sub removeDomainZone {
+	my $domain = shift;
+	unlink("$config{'named_base_dir'}$config{'named_zone_dir'}$domain");
+}
+
+sub removeDomainMasterZone {
+	my $domain = shift;
+	my $namedconf;
+	my $qdomain = quotemeta $domain;
+	lockf("named.conf");
+	readFile($config{'named_conf'}, \$namedconf);
+	$namedconf =~ s/zone "$qdomain"[^\}]*\};\n//;
+	writeFile($config{'named_conf'}, \$namedconf);
+	unlockf("named.conf");
+}
+# End Add and Remove Master domains
+
+# Add and Remove Subdomains
+
+sub addSubdomainZone {
+	my $domain = shift;
+	my $subdomain = shift;
+	my $ip = shift;
+	my $zone;
+	lockf("$domain.zone");
+        readFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+        $zone =~ s/(\*[\s\t]+IN[\s\t]+)/$subdomain.\tIN\tA\t$ip\n$1/;
+        writeFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+        unlockf("$domain.zone");
+}
+sub removeSubdomainZone {
+	my $domain = shift;
+	my $subdomain = shift;
+	my $ip = shift;
+	lockf("$domain.zone");
+        readFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+	#Insert Remove regexp
+	writeFile("$config{'named_base_dir'}$config{'named_zone_dir'}$domain", \$zone);
+        unlockf("$domain.zone");
+	
+}
+# End Add and Remove Subdomains
+
+# End Of Core Bind Management Methods
+
+# Bind Management Functions (Functions make use of Bind management core methods)
+
+
+sub createDomain {
+	my $domain = shift;
+	my $ip = shift;
+		addDomainMasterZone($domain);
+		addDomainZone($domain, $ip);
+		chmod 640, "$config{'named_base_dir'}$config{'named_zone_dir'}$domain";
+	setRestart("name");
+}
+
+sub createSubDomain {
+	my $domain = shift;
+	my $topdomain = shift;
+	my $ip = shift;
+	addSubdomainZone($topdomain, $domain, $ip);
+
+}
+
+sub removedomain {
+	my $domain = shift;
+	my $ip = shift;
+}
+
+sub removeSubDomain {
+	my $domain = shift;
+	
+}
+# End of Bind Management Functions

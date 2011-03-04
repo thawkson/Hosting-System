@@ -1,0 +1,217 @@
+#!/usr/bin/perl
+
+sub tcp_config {
+        #TODO: get data from mysql
+        $config_pl_tcp{'timeout_tcp_dump'} = 5;
+        $config_pl_tcp{'proc_net'} = "/proc/net/tcp";
+}
+
+
+sub tcp_fill {
+        my %this;
+        my $first;
+        #time to dump to array?
+        if (time - $time_tcp_dump > $config_pl_tcp{'timeout_tcp_dump'}) {
+                undef @tcp_dump;
+                $first = 1;
+                open NET, $config_pl_tcp{'proc_net'};
+                foreach (<NET>) {
+                        if ($first) {
+                                $first = 0;
+                                next;
+                        }
+                        $this{'src_ip'} = lc(substr($_, 6, 8));
+                        $this{'src_port'} = lc(substr($_, 15, 4));
+                        $this{'dest_ip'} = lc(substr($_, 20, 8));
+                        $this{'dest_port'} = lc(substr($_, 29, 4));
+                        $this{'uid'} = int(substr($_, 76, 5));
+                        ($this{'inode'}) = substr($_, 91, length($_)-91) =~ /^(\d+)/;
+                        push @tcp_dump, {%this};
+                }
+                close NET;
+                $time_tcp_dump = time;
+        }
+}
+
+sub tcp_parse {
+        my ($src_ip, $dest_ip, $protocol, $r_pkt) = @_;
+        my ($src_port, $dest_port);
+        if ($protocol == 6) {
+                $src_port = unpack("H*",substr($$r_pkt, 34, 2));
+                $dest_port = unpack("H*",substr($$r_pkt, 36, 2));
+                foreach (@tcp_dump) {
+                        #packet could be inbound or outbound, and we don't know which IP (src or dest) is local until after the match (kernel lists local IP first)
+                        if ((${$_}{'src_ip'} eq $src_ip
+                                && ${$_}{'dest_ip'} eq $dest_ip
+                                && ${$_}{'src_port'} eq $src_port
+                                && ${$_}{'dest_port'} eq $dest_port) ||
+                                (${$_}{'src_ip'} eq $dest_ip
+                                && ${$_}{'dest_ip'} eq $src_ip
+                                && ${$_}{'src_port'} eq $dest_port
+                                && ${$_}{'dest_port'} eq $src_port)){
+                                return(${$_}{'uid'}, ${$_}{'src_ip'}, ${$_}{'src_port'}, ${$_}{'inode'});
+                        }
+                }
+        }
+}
+
+sub udp_config {
+        #TODO: get data from mysql
+        $config_pl_udp{'timeout_udp_dump'} = 5;
+        $config_pl_udp{'proc_net'} = "/proc/net/udp";
+}
+
+sub udp_fill {
+        my %this;
+        my $first;
+        #time to dump?
+        if (time - $time_udp_dump > $config_pl_udp{'timeout_udp_dump'}) {
+                undef @udp_dump;
+                $first = 1;
+                open NET, $config_pl_udp{'proc_net'};
+                foreach (<NET>) {
+                        if ($first) {
+                                $first = 0;
+                                next;
+                        }
+                        $this{'src_ip'} = lc(substr($_, 6, 8));
+                        $this{'src_port'} = lc(substr($_, 15, 4));
+                        $this{'dest_ip'} = lc(substr($_, 20, 8));
+                        $this{'dest_port'} = lc(substr($_, 29, 4));
+                        $this{'uid'} = int(substr($_, 76, 5));
+                        ($this{'inode'}) = substr($_, 91, length($_)-91) =~ /^(\d+)/;
+                        push @udp_dump, {%this};
+                }
+                close NET;
+                $time_udp_dump = time;
+        }
+}
+
+sub upd_parse {
+        my ($src_ip, $dest_ip, $protocol, $r_pkt) = @_;
+        my ($src_port, $dest_port);
+        if ($protocol == 17) {
+                $src_port = unpack("H*",substr($$r_pkt, 34, 2));
+                $dest_port = unpack("H*",substr($$r_pkt, 36, 2));
+                foreach (@udp_dump) {
+                        #packet could be inbound or outbound, and we don't know which IP (src or dest) is local until after the match (kernel lists local IP first)
+                        if ((${$_}{'src_ip'} eq $src_ip
+                                && ${$_}{'dest_ip'} eq $dest_ip
+                                && ${$_}{'src_port'} eq $src_port
+                                && ${$_}{'dest_port'} eq $dest_port) ||
+                                (${$_}{'src_ip'} eq $dest_ip
+                                && ${$_}{'dest_ip'} eq $src_ip
+                                && ${$_}{'src_port'} eq $dest_port
+                                && ${$_}{'dest_port'} eq $src_port)){
+                                return (${$_}{'uid'}, ${$_}{'src_ip'},${$_}{'src_port'}, ${$_}{'inode'});
+                        }
+                }
+        }
+}
+
+sub inode_config {
+        #TODO: get config from mysql
+        $config_pl_inode{'timeout_inode_dump'} = 10;
+        $config_pl_inode{'proc'} = "/proc";
+        $config_pl_inode{'proc_fd'} = "fd";
+        $config_pl_inode{'socketMatch'} = "socket:[";
+        $config_pl_inode{'mastered'}{'22'} = 1;
+}
+
+sub inode_fill {
+        my $qSocketMatch;
+        #time to dump?
+        if (time - $time_inode_dump > $config_pl_inode{'timeout_inode_dump'}) {
+                undef %inode_dump;
+
+                #get all processes
+                opendir PROC, $config_pl_inode{'proc'};
+                @procs = grep(/^\d+$/, readdir(PROC));
+                closedir PROC;
+                foreach $proc (@procs) {
+                        next if !(-d $config_pl_inode{'proc'}."/$proc");
+                        $uid = (stat($config_pl_inode{'proc'}."/$proc"))[4];
+
+                        #get all file descriptors for process
+                        opendir FD,$config_pl_inode{'proc'}."/$proc/"."$config_pl_inode{'proc_fd'}";
+                        @fds = grep(/^\d+$/, readdir(FD));
+                        closedir FD;
+                        foreach $fd (@fds) {
+
+                                #look for a socket descriptor
+                                $qSocketMatch = quotemeta $config_pl_inode{'socketMatch'};
+                                ($inode) = readlink($config_pl_inode{'proc'}."/$proc/"."$config_pl_inode{'proc_fd'}"."/$fd") =~ /^$qSocketMatch(\d+)/;
+                                if ($inode) {
+                                        $inode_dump{$inode}{'uid'} = $uid;
+                                        $inode_dump{$inode}{'proc'} = $proc;
+                                }
+                        }
+                }
+                $time_inode_dump = time;
+        }
+}
+
+#We should have the inode from the parseAndMatch hook.  Check to see if this port is 'mastered' (inaccurate UID displayed in /proc/net files)
+
+sub inode_afterMatch {
+        my ($uid, $local_ip, $local_port, $inode) = @_;
+        if ($config_pl_inode{'mastered'}{hex($local_port)}) {
+                $uid = $inode_dump{$inode}{'uid'};
+        }
+        return ($uid, $local_ip, $local_port, $inode);
+}
+
+
+sub HTTPFileNames{
+        my(@logFiles, $i);
+
+        opendir(LOGDIR, "$config{'bandwidth_http_path'}");
+                eval('@logFiles = grep(' . $config{'bandwidth_http_regex'} . ', readdir(LOGDIR))');
+        closedir(LOGDIR);
+
+        ## Numeric Sort the second column (split() with a period)
+
+        @logFiles = fieldsort( '\.',['2n'], @logFiles);
+
+
+        ## Apend the full path name on to the filename
+
+        $i = 0;
+
+        foreach (@logFiles){
+                $logFiles[$i] = $config{'bandwidth_http_path'} . $logFiles[$i];
+                $i++;
+        }
+        return(@logFiles);
+}
+
+sub HTTPParseLine {
+        my($line) = $_[0];
+
+        my(@ret,@lineDat);
+
+        $line =~ s/"[^"]+"//g;
+        @lineDat = split(/\s+/,$line);
+
+        my($date) = $lineDat[4];
+        my($day, $month, $year, $hour, $min, $sec) = ($date =~ /(\d+)\/([A-Za-z]+)\/(\d+):(\d+):(\d+):(\d+)/);
+
+        ##Extract the numeric time
+        $ret[$BW_FIELD_TIME] = L33T_TimeToEpoch($year, L33T_MonthToNumber($month), $day, $hour, $min, $sec);
+
+        if( $lineDat[7] =~ /^\D+/){
+                $lineDat[7] = 0;
+        }
+
+        ##Extract the Bandwidth
+        $ret[$BW_FIELD_BANDWIDTH] = $lineDat[7];
+
+        ##Extract the user
+        $ret[$BW_FIELD_USER] = $lineDat[0];
+
+	return(@ret);
+}
+
+
+1;
+

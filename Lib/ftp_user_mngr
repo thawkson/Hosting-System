@@ -1,0 +1,125 @@
+#!/usr/bin/perl -w
+
+use strict;
+use DBI();
+use Carp;
+use Getopt::Std;
+
+require 'user.lib';
+require 'database.lib';
+
+my (%opts,$dbh);
+my $DB = "monkeymeat";
+my $HOST = "localhost";
+my $DBUSER = "monkeymeat";
+my $DBPASS = "ogee";
+
+#**************************************************
+# Main
+ getopts('?ADLU:a:u:p:', \%opts);
+ $dbh = DBLib::Open_DBI($DB,$HOST,$DBUSER,$DBPASS);
+
+# Add User
+ if ($opts{'A'}) {
+	my $user = $opts{'u'} || die "You Must Enter a Username\n";
+	my $pass = $opts{'p'} || die "You Must Enter a Password\n";
+	my $adminuser = $opts{'a'} || die "You Must Enter an Admin User\n";
+	my $uid = "1010";
+	my $gid = "1001";
+	my $dir = "/home/hosted/$user";
+	my $adminid=GENLib::get_adminID($dbh,$adminuser);
+	Add_Ftp_User($dbh,$user,$pass,$uid,$gid,$dir,$adminid);
+ }
+
+# Lock Ftp Account
+ elsif($opts{'L'}) {
+	my $status = "L";
+	Lock_Unlock($dbh,$opts{'u'});
+ }
+
+# Unlock Ftp Account
+ elsif($opts{'U'}) {
+	my $status = "U";
+	Lock_Unlock($dbh,$opts{'u'});
+ }
+
+# Delete User
+ elsif($opts{'D'}) {
+	my $user = $opts{'u'} || die "You Must Enter a Username\n";
+	Delete_Ftp_User($dbh,$user);
+ }
+# Handle Help Options
+ else {
+	help();
+ }
+
+ DBLib::Close_DBI($dbh);
+
+
+# End Main
+#************************************************
+
+
+sub Add_Ftp_User {
+ my ($dbh,$user,$password,$uid,$gid,$dir,$adminid) = @_;
+ my($sql);
+
+ if((GENLib::Check_Ftp_User_Exists($dbh,$user))== 0) {
+ 	$sql=$dbh->prepare("INSERT INTO ftpd (admin_id,user,Password,Uid,Gid,Dir) values('$adminid','$user','$password','$uid','$gid','$dir')");
+	$sql->execute();
+	$sql->finish();
+	return(0);
+ }
+ else {
+	return(1);
+ }
+
+}
+
+sub Lock_Unlock {
+ my ($dbh,$user,$status) = @_;
+ my ($sql)
+ 
+ if((GENLib::Check_Ftp_User_Exists($dbh,$user) ==0) {
+	if ($status eq "L") {
+		$sql=$dbh->prepare(update admin where status 
+	}
+	else {
+		# Unlock account
+		$sql=$dbh->prepare(update admin where status
+	}
+ }
+ else {
+	print "User does not exist\n";
+ } 		
+}
+
+sub Delete_Ftp_User {
+ my ($dbh,$user) = @_;
+ my $sql;
+
+ $sql = $dbh->prepare("DELETE FROM ftpd WHERE user = '$user'");
+ $sql->execute();
+ $sql->finish();
+
+}
+
+sub help {
+    print <<"HELP";
+Usage: $0 [opts]
+
+Adds And Removes Ftp Users
+
+Options:
+  -?    Display this help message
+  -A    Add and Ftp Account
+  -D    Delete Ftp Account
+  -L	Change Status to Locked
+  -U	Change Status to Unlocked
+  -a	Admin User ID 	(required)
+  -u    Username 	(required)
+  -p    Password 	(required)
+HELP
+  exit(0);
+ }
+

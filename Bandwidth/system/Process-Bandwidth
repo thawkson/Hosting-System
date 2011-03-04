@@ -1,0 +1,94 @@
+#!/usr/bin/perl -w
+
+use strict;
+require 5;
+
+#Program Name
+$0 = "Process_Bandwidth";
+
+my ($web,$system);
+
+# Parse Web Logs (access.log)
+
+my @AccessLogsDir = </home/webalizer/domains/*>;
+foreach my $hostdir (@AccessLogsDir) {
+	if (-d $hostdir) {
+		my $AccessLogs = "$hostdir/access.log";
+		#Get the domain name from the path
+		my @domain = split(/\//,$hostdir);
+		
+		#Process the access log
+		my $bandwidth = read_apache_access_log($AccessLogs);
+		
+		#Store Value in a Hash
+		$web->{$domain[4]}=$bandwidth;
+		
+		foreach (keys %{$web}) {
+			print "$_:$web->{$_}\n";
+		}
+	}
+}
+
+# Parse System Bandwidth Log
+my $packetlog = "packetlog";
+$system = read_system_bandwidth_log($packetlog);
+for my $user ( keys %$system ) {
+	my $sbandwidth = $system->{ $user }->{ 'bandwidth' };
+	print "$user: $sbandwidth\n";
+}
+
+# Log Parsing Functions
+
+sub read_apache_access_log {
+ my ($file) = @_;
+ my (@SplitArray,$byte_count);
+ $byte_count = 0;
+ open(FILE, $file) or return undef;
+ my (@lines) = <FILE>;
+ @lines = sort(@lines); 
+ foreach my $line (@lines) {
+	chomp($line);
+	@SplitArray = split(/ /,$line);
+	#Skip line if bytes field is "-"
+	next if ($SplitArray[9] =~ /^\s*-/);
+	#total byte count
+	$byte_count = $byte_count + $SplitArray[9];
+ }
+ close(FILE);
+ return($byte_count);
+}
+
+sub read_system_bandwidth_log {
+ my ($file) = @_;
+ my (@SplitLine,$byte_count,$name,$uid);
+ my %system_bandwidth =();
+ open(FILE,$file) or return undef;
+ my (@lines) = <FILE>;
+ @lines = sort(@lines);
+
+ foreach my $line (@lines) {
+	$byte_count = 0;
+	chomp($line);
+	@SplitLine = split(/ /,$line);
+	# Skip Blank Lines
+	next if ($line =~ /^\s*$/);
+	$byte_count = $SplitLine[4];
+	# Skip a line with no byte field
+	next if !$byte_count;
+
+	#Convert the UID to a name
+	$uid=$SplitLine[1];
+	if (!$uid) {
+		$name="unknown"
+	}
+	else {
+		$name = (getpwuid($uid))[0];
+		if (!$name) {
+			$name = "root"
+		}
+	}
+	$system_bandwidth{$name}{'bandwidth'} += $byte_count;
+ } 
+close(FILE);
+ return \%system_bandwidth;
+}

@@ -1,0 +1,66 @@
+#!/usr/bin/perl -w
+
+# System user Core Methods
+
+sub changePassword {
+	my $user = shift;
+	my $pass = shift;
+	system "echo \"$pass\" | $config{'passwd_exec'} --stdin $user";
+}
+
+sub grantSSHRemoteAccess {
+        my $user = shift;
+        my $conf;
+        lockf("ssh.conf");
+        readFile($config{'ssh_conf'},\$conf);
+        $conf =~ s/^AllowUsers/qq~AllowUsers $user\n~.$&/me;
+        writeFile($config{'ssh_conf'},\$conf);
+        unlockf("ssh.conf");
+}
+
+sub ungrantSSHRemoteAccess {
+        my $user = shift;
+        my $conf;
+        lockf("ssh.conf");
+        readFile($config{'ssh_conf'},\$conf);
+        $conf =~ s/^AllowUsers $user\n//m;
+        writeFile($config{'ssh_conf'},\$conf);
+        unlockf("ssh.conf");
+}
+
+# End of Core Methods
+
+
+# System user Functions (makes use of Core Methods)
+
+sub createSystemUser {
+	my $user = shift;
+	my $group = shift;
+	my $pass = shift;
+	my $home_dir = shift;
+	my $r_db = shift;
+	system "$config{'useradd_exec'} -g $group $user";
+	changePassword($user, $pass);
+	system "$config{'cp_exec'} -rf $config{'base_dir'}$config{'home_template_dir'}* $home_dir";
+	system "$config{'chown_exec'} -R $user.$config{'group_safe_default'} $home_dir";
+        system "$config{'chmod_exec'} -R 771 $home_dir";
+}
+
+sub removeSystemUser {
+	my $user = shift;
+	system("$config{'userdel_exec'} -r $user");
+}
+
+sub grantRemoteAccess {
+        my $user = shift;
+        grantSSHRemoteAccess($user);
+	setRestart("remote");
+}
+
+sub ungrantRemoteAccess {
+        my $user = shift;
+        ungrantSSHRemoteAccess($user);
+	setRestart("remote");
+}
+
+# End of System user Functions

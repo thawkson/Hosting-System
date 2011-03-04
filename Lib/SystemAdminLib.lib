@@ -1,0 +1,57 @@
+#!/usr/bin/perl -w
+
+# General Functions used by other libraries
+# This should be required by most of the other standard libraries
+
+# Flat File Handling Functions
+sub readFile {
+        my $file = shift;
+        my $r_string = shift;
+        undef $$r_string;
+        open FILE, $file;
+        foreach (<FILE>) {
+                $$r_string .= $_;
+        }
+        close FILE;
+}
+
+sub writeFile {
+        my $file = shift;
+        my $r_string = shift;
+        open FILE, "+> $file";
+        print FILE $$r_string;
+        close FILE;
+}
+
+sub appendFile {
+        my $file = shift;
+        my $r_string = shift;
+        open FILE, ">> $file";
+        print FILE $$r_string;
+        close FILE;
+}
+
+sub lockf {
+        my $file = shift;
+        my $i = 0;
+        my $lockfile = "$config{'base_dir'}$config{'lock_dir'}$file.lock";
+        while (-e $lockfile) {
+                sleep 1;
+                $i++;
+                if ($i > 12) {
+                        unlink($lockfile);
+                        last;
+                }
+        }
+        open (LOCK, "+> $lockfile");
+        close LOCK;
+}
+
+sub unlockf {
+        my $file = shift;
+        my $lockfile = "$config{'base_dir'}$config{'lock_dir'}$file.lock";
+        unlink($lockfile);
+}
+# End of File Handling Functions
+
+# End of General Functions

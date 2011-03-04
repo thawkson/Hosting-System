@@ -1,0 +1,35 @@
+;
+;  Database file packetmonkey.ca for packetmonkey.ca zone.
+;	Zone version: 2008052006
+;
+
+$TTL 3D
+@		3D	IN  SOA  packetmonkey.ca. root.packetmonkey.ca. (
+				2008052006	; serial number
+				8H	; refresh
+				2H	; retry
+				4W	; expire
+				1D	; minimum TTL
+				)
+;
+; Zone NS Records
+;
+
+@		IN	NS	ns1.packetmonkey.ca.
+
+;
+; Zone MX Records
+;
+
+@		IN	MX	10  mail.packetmonkey.ca.
+
+;
+; Zone Records
+;
+
+@		IN	A	209.217.82.130
+ns1		IN	A	209.217.82.130
+mail		IN	A	209.217.82.130
+ftp		IN	A	209.217.82.130
+www		IN	A	209.217.82.130
+tones		IN	A	209.217.82.131

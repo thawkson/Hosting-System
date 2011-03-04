@@ -1,0 +1,248 @@
+#!/usr/bin/perl
+
+# Program Name
+$0 = "m0nk3ym34t_BandwidthDaemon";
+
+use Sort::Fields;
+use Net::Pcap;
+use Time::JulianDay;
+use Time::HiRes qw(time usleep);
+
+require "protocol.lib";
+
+
+L33T_RegisterHook("L33Tpacketlog","getConfig",\&inode_config);
+L33T_RegisterHook("L33Tpacketlog","fillDumps",\&inode_fill);
+L33T_RegisterHook("L33Tpacketlog","afterMatch", \&inode_afterMatch);
+L33T_RegisterHook("L33Tpacketlog","getConfig",\&tcp_config);
+L33T_RegisterHook("L33Tpacketlog","fillDumps", \&tcp_fill);
+L33T_RegisterHook("L33Tpacketlog","parseAndMatch", \&tcp_parse);
+L33T_RegisterHook("L33Tpacketlog","getConfig", \&udp_config);
+L33T_RegisterHook("L33Tpacketlog","fillDumps", \&udp_fill);
+L33T_RegisterHook("L33Tpacketlog","parseAndMatch",\&upd_parse);
+
+getConfig();
+
+#Apply packet filter and listen on interface, running &process_pkt for every packet found
+$pcap_t = Net::Pcap::open_live($config_pl{'init_interface'},$config_pl{'init_snapSize'}, $config_pl{'init_promis'}, $config_pl{'init_timeout'}, \$err);
+Net::Pcap::compile($pcap_t, \$filter_t,$config_pl{'filter_string'},1,$config_pl{'filter_netmask'});
+Net::Pcap::setfilter($pcap_t, $filter_t);
+Net::Pcap::loop($pcap_t, -1, \&process_pkt, "");
+Net::Pcap::close($pcap_t);
+
+
+
+sub getConfig {
+        my (@ip,@hooks);
+
+        $config_pl{'init_interface'} = "eth0";
+        $config_pl{'init_snapSize'} = 68;
+        $config_pl{'init_promis'} = 0;
+        $config_pl{'init_timeout'} = 2000;
+        $config_pl{'filter_string'} = "not port 80";
+        $config_pl{'filter_netmask'} = "255.255.255.0";
+        $config_pl{'$log_update_timeout'} = 300;
+        $config_pl{'$log_file'} = "packetlog";
+        $config_pl{'$lock_file'} = "packetlog.lock";
+        $config_pl{'local_ips'}{'209.167.90.227'} = 1;
+        $config_pl{'local_ips'}{'127.0.0.1'} = 1;
+        $config_pl{'local_ips'}{'0.0.0.0'} = 1;
+
+        #convert config ips into format found in /proc/net/tcp
+        #Takes A.B.C.D string and converts to DCBA in hex
+        foreach (keys %{$config_pl{'local_ips'}}) {
+                @ip = split /\./;
+                $ip_string = unpack("H*",pack("C",$ip[3])).unpack("H*",pack("C",$ip[2])).unpack("H*",pack("C",$ip[1])).unpack("H*", pack("C",$ip[0]));
+                $local_ips_tr{$ip_string} = 1;
+        }
+
+        ## HOOK: getConfig
+        ## Desc: This is where modules can load mysql config data and other config data
+        @hooks = L33T_GetHooks("L33Tpacketlog","getConfig"); foreach (@hooks) { &{$_}; }
+	print @hooks;
+}
+
+sub process_pkt {
+        my($user_data, $hdr, $pkt) = @_;
+        my (@hooks, $protocol, $src_ip, $dest_ip, $uid, $local_ip, $local_port, $inode);
+
+        ## HOOK: fillDumps
+        ## Desc: Use this hook to periodically dump and parse required info from files into an array/hash
+        @hooks = L33T_GetHooks("L33Tpacketlog","fillDumps"); foreach (@hooks) { &{$_}; }
+
+        #eth header = 14 bytes, IP header = 20
+        $protocol = unpack("C*",substr($pkt, 23, 1));
+        $src_ip = unpack("H*",substr($pkt, 29, 1)) .
+                unpack("H*",substr($pkt, 28, 1)) .
+                unpack("H*",substr($pkt, 27,1)) .
+                unpack("H*",substr($pkt, 26, 1));
+        $dest_ip = unpack("H*",substr($pkt, 33, 1)) .
+                unpack("H*",substr($pkt, 32, 1)) .
+                unpack("H*",substr($pkt, 31,1)) .
+                unpack("H*",substr($pkt, 30, 1));
+
+        #return if transfer is from and to IPs we don't want to track (ie.localhost to localhost)
+        return if ($local_ips_tr{$src_ip} && $local_ips_tr{$dest_ip});
+
+        ## HOOK: parseAndMatch
+        ## Desc: Parse the packet based on protocol. Stops calling hooks upon successful match
+        ## Args: Source IP, Destination IP, Protocol number, reference to entire packet
+        ## Returns: UID of who transferred packet, local ip, local port, and inode (inode doesn't have to be returned)
+        @hooks = L33T_GetHooks("L33Tpacketlog","parseAndMatch");
+        foreach (@hooks) {
+                ($uid, $local_ip, $local_port, $inode) = &{$_}($src_ip, $dest_ip, $protocol, \$pkt);
+                last if $uid ne "";
+        }
+
+        #check if match success
+        if ($uid ne "" && $local_ip ne "" && $local_port ne "") {
+
+                ## HOOK: afterMatch
+                ## Desc: Correct any of the data that we're about to log
+                ## Args/Returns: UID, local ip, local port, inode
+                @hooks = L33T_GetHooks("L33Tpacketlog","afterMatch");
+                foreach (@hooks) {
+                        ($uid, $local_ip, $local_port, $inode) = &{$_}($uid, $local_ip, $local_port, $inode);
+                }
+
+                #update the log hash
+                $log{$uid}{'ip'}{$local_ip}{'port'}{$local_port}{'bytes'} += ${$hdr}{'len'};
+        }
+
+        #time to update the log file?
+        if (time - $time_log_update > $config_pl{'$log_update_timeout'}) {
+                $printTime = int(time);
+                open LOG, ">> $config_pl{'$log_file'}";
+                L33T_Lock(LOG);
+                foreach $user (keys %log) {
+                        foreach $ip (keys %{$log{$user}{'ip'}}) {
+                                foreach $port (keys %{$log{$user}{'ip'}{$ip}{'port'}}) {
+                                        $printIP = hex(substr($ip,6,2)).".".hex(substr($ip,4,2)).".".hex(substr($ip,2,2)).".".hex(substr($ip,0,2));
+                                        $printPort = hex($port);
+                                        print LOG "$printTime $user $printIP $printPort $log{$user}{'ip'}{$ip}{'port'}{$port}{'bytes'}\n";
+                                }
+                        }
+                }
+                L33T_Unlock(LOG);
+                close LOG;
+                undef %log;
+                $time_log_update = time;
+        }
+}
+
+
+### Functions that should get moved out of this program into a General library
+
+#MODULE FUNCTIONS
+#getModules:
+#Usage: getModules($MODULE_DIRECTORY, $PROGRAM_NAME)
+#Requires all modules that begin with $PROGRAM_NAME and end in ".mod"
+sub L33T_GetModules {
+        my ($dir,$program) = @_;
+        my @mods;
+        opendir MODS, $dir;
+        my $qProgram = quotemeta $program;
+        @mods = grep(/^$qProgram_.*?\.mod$/, readdir(MODS));
+        closedir MODS;
+        foreach (@mods) {
+                require $dir."/$_";
+        }
+}
+
+#registerHook:
+#Binds functions to hooks in programs (for modules)
+#Usage: registerHook($PROGRAM, $HOOK, \&FUNCTION)
+sub L33T_RegisterHook {
+        my ($program, $hook, $function) = @_;
+        push @{$sys_hooks{$program}{'hooks'}{$hook}{'funcs'}}, $function;
+}
+
+
+#getHooks:
+#Usage: @ARRAY = getHooks($PROGRAM, $HOOK)
+#Returns: Array containing hook function references
+sub L33T_GetHooks {
+        my ($program, $hook) = @_;
+        return @{$sys_hooks{$program}{'hooks'}{$hook}{'funcs'}};
+}
+
+#LOCK FUNCTIONS
+#lock:
+#Usage: lock(FILEHANDLE)
+sub L33T_Lock {
+        $FH = shift;
+        flock $FH, 2;
+        seek $FH,0,2;
+}
+#unlock:
+#Usage: unlock(FILEHANDLE)
+sub L33T_Unlock {
+        $FH = shift;
+        flock $FH, 8;
+}
+
+## Convert a full date into Epoch time
+##
+## Arguments
+## Year : Must be in 4 digit format
+## Month : Must be in numeric form
+## Day : Must be in numeric form
+## Hour : Must be in 24 hour clock form
+## Minute : Uhh... yeah.. numeric form....
+## Second : Same deal.... numeric form....
+
+sub L33T_TimeToEpoch
+{
+
+        return( jd_timelocal( $_[5], $_[4], $_[3], $_[2], $_[1]-1, $_[0]));
+}
+
+## Convert an epoch time into an array of date elements
+##
+## Arguments
+## Date in Epoch time..
+sub L33T_EpochToTime
+{
+        my(@tmp) = localtime($_[0]);
+
+        my(@ret);
+
+        $ret[0] = 1900 + $tmp[5];
+        $ret[1] = $tmp[4] + 1;
+        $ret[2] = $tmp[3];
+        $ret[3] = $tmp[2];
+        $ret[4] = $tmp[1];
+        $ret[5] = $tmp[0];
+
+        return(@ret);
+}
+
+
+#PROCESS FUNCTIONS
+#procCheck:
+#Usage procCheck($PROCESS_SEARCH_NAME)
+#Searches all process cmdlines for argument string. Dies if found
+sub L33T_ProcCheck {
+        my ($found, $line, $proc, @procs, $search, $qSearch);
+        $search = shift;
+        $config{'proc'} = "/proc";
+        $config{'cmdline'} = "cmdline";
+        opendir PROC, $config{'proc'};
+        @procs = grep(/^\d+$/, readdir(PROC));
+        closedir PROC;
+        foreach $proc (@procs) {
+                next if (!(-d $config{'proc'}."/$proc") || $proc == $$);
+                open CMD, $config{'proc'}."/$proc/".$config{'cmdline'};
+                $line = <CMD>;
+                if ($line eq $search) {
+                        $found = $proc;
+                        close CMD;
+                        last;
+                }
+                close CMD;
+        }
+        if ($found ne "") {
+                die qq~Program "$search" already running as process $found.  Kill the process first.~;
+        }
+}
+

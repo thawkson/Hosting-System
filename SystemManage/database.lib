@@ -1,0 +1,28 @@
+#!/usr/bin/perl -w
+
+package DBLib;
+use strict;
+
+# Database Connection Library
+
+
+
+# Database Connection Routines
+sub Open_DBI {
+
+# Database Creditials
+my ($DBNAME,$DBHOST,$DBUSERNAME,$DBPASSWORD) = @_;
+my ($dbh);
+
+        $dbh=DBI->connect("DBI:mysql:database=$DBNAME:host=$DBHOST","$DBUSERNAME","$DBPASSWORD") or
+		err_trap("MySQL Connection Failed Please Try Again\n");
+	return $dbh;
+}
+
+sub Close_DBI {
+	my ($dbh) = @_;
+	$dbh->disconnect();
+}
+# End of Database Connection Routines
+
+1;
